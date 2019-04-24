@@ -1,0 +1,626 @@
+---
+output: 
+  html_document:
+    toc: true
+---
+
+# CoFa Development 
+##### `r format(Sys.time(), '%I:%M %p %B %d, %Y')`
+
+````{r}
+
+set.seed(4)
+library(rpart)
+
+path.dir <- "/Users/Hallee/Desktop/cofa/R" 
+setwd(path.dir)
+
+source('ccfAnalysis.R')
+source('splitFunctionsGini.R')
+source('splitFunctionsGiniRandom.R')
+source('ccfTrials.R')
+
+df <- read.csv(paste0(path.dir, "/../data/fake.csv"))
+````
+
+
+# Import Packages 
+```{r}
+
+library(rpart)
+library(rpart.plot)
+library(xtable)
+library(plyr) # for map values
+library(magrittr) # for %>%
+library(forcats) # for collapse factor
+library(MASS) # write.matrix
+library(parallel)
+library(pbmcapply)
+
+source('ccfAnalysis.R')
+source('splitFunctionsGini.R')
+source('splitFunctionsGiniRandom.R')
+source('ccfTrials.R')
+
+pal = wes_palette("FantasticFox")
+```
+
+# Import Data
+
+```{r}
+#postData = read.csv("./FakeData/FakeData_processed.csv")
+postData = read.csv("/Volumes/HEALTHCARE/local_thesis_files/ProcessedData_11_2.csv")
+dim(postData)
+
+source("makeVariables.R")
+source("cutoffDates.R")
+dim(cutData)
+
+cutData = cutData[which(!(cutData$DX1Name_major == "" | cutData$DX1Name_chapter == "") ),]
+cutData$DX1Name_chapter <- droplevels(cutData$DX1Name_chapter)
+cutData$DX1Name_major <- droplevels(cutData$DX1Name_major)
+dim(cutData)
+```
+
+# chapter1, major1, major1c
+
+chapter1 - equivalent to DX1Name_chapter but labelled Ch1, Ch2, ... for easy reading
+
+major1 - equivalent to DX1Name_major but labelled M1, M2, ... for easy reading
+
+major1c - all majors with <100 examples are collapsed into 'other'
+
+## chapter
+```{r}
+# make list of new names
+m = length(levels(cutData$DX1Name_chapter))
+chapterNames = c(sapply("Ch",1:m,FUN=paste0))
+
+# save ket for chapters
+chapter_key = cbind(chapterNames, c(levels(cutData$DX1Name_chapter)) ) 
+#write.csv(chapter_key, file="./CCFA/chapter_key.csv", row.names = FALSE)
+#write(print(xtable(chapter_key), include.rownames = FALSE), file="./CCFA/chapter_table.txt")
+
+# create new simple chapter variable
+cutData$chapter1 <- mapvalues(cutData$DX1Name_chapter, 
+                              from = c(levels(cutData$DX1Name_chapter)), 
+                              to = chapterNames )
+```
+
+```{r}
+chapter_tbl = merge(data.frame(chapter_key), data.frame(table(cutData$DX1Name_chapter)), by.x="V2", by.y="Var1")
+names(chapter_tbl) <- c("LongName","ShortName","Freq")
+save(chapter_tbl, file="./CCFA/chapter_tbl_key_and_freq")
+```
+
+## major
+```{r}
+# make list of new names
+m = length(levels(cutData$DX1Name_major))
+majorNames = c(sapply("M",1:m,FUN=paste0))
+
+# save key for majors
+major_key = cbind(majorNames, c(levels(cutData$DX1Name_major)) )
+#write.csv(major_key, file="./CCFA/major_key.csv", row.names = FALSE)
+#write(print(xtable(major_key), include.rownames = FALSE), file="./CCFA/major_table.txt")
+
+# create new variable
+cutData$major1 <- mapvalues(cutData$DX1Name_major, 
+                              from = c(levels(cutData$DX1Name_major)), 
+                              to = majorNames )
+```
+
+```{r}
+major_tbl = merge(data.frame(major_key), data.frame(table(cutData$DX1Name_major)), by.x="X", by.y="Var1")
+names(major_tbl) <- c("LongName","ShortName","Freq")
+save(major_tbl, file="./CCFA/major_tbl_key_and_freq")
+```
+
+
+## Consolidation
+```{r}
+tbl = data.frame(table(cutData$major1))
+lst <- as.character(tbl[tbl$Freq < 100,"Var1"])  # change this for fake/real data!
+cutData$major1c <- cutData$major1 %>% fct_collapse(Other = c(lst))
+
+# number of levels remaining
+length(unique(cutData$major1c))
+
+#write(print(xtable(major_key[major_key[,1] %in% levels(cutData$major1c),]), 
+#            include.rownames = FALSE), 
+#            file="./CCFA/major_table_consolidated.txt")
+
+```
+
+````{r}
+unique(cutData$major1c)
+```
+
+```{r}
+major_key <- rbind(c("Other","Other - user created category"),major_key)
+major_tbl_consolidated = merge(major_key[major_key[,1] %in% levels(cutData$major1c),],
+                  data.frame(table(cutData$major1c)), by.x="majorNames", by.y="Var1")
+names(major_tbl_consolidated) <- c("ShortName","LongName","Freq")
+save(major_tbl_consolidated, file="./CCFA/major_tbl_consolidated_key_and_freq")
+```
+
+```{r}
+#major_key <- read.csv(file="./CCFA/major_key.csv")
+#chapter_key <- read.csv(file="./CCFA/chapter_key.csv")
+```
+
+
+# Run Experiment
+
+Procedure
+- shuffle labels for levels on entire dataset
+  - save list of labels 
+- fit random forest with 100 trees to the entire dataset USING CHAPTER
+  - save total matrix
+  - save freq matrix
+- fit random forest with 100 trees to the entire dataset USING MAJOR
+  - save total matrix
+  - save freq matrix
+
+## shuffled labels
+- create a list length 500 where each elemnet is a list of shuffled labels (the length of the dataset)
+```{r}
+# lists for saving the labels
+chapter_labels = list()
+major_labels = list()
+
+# first entry is the original label order
+chapter_labels[[1]] = cutData$chapter1
+major_labels[[1]] = cutData$major1c
+
+# reshuffle labels 500 times 
+for (i in 2:501){
+  chapter_labels[[i]] = sample(cutData$chapter1, size=length(cutData$chapter1), replace=FALSE)
+  major_labels[[i]] = sample(cutData$major1c, size=length(cutData$major1c), replace=FALSE)
+}
+
+# save for later
+#save(chapter_labels, file="./CCFA/chapter_labels")
+#save(major_labels, file="./CCFA/major_labels")
+```
+
+How to re-load saved list objects... 
+```{r}
+load(file="./CCFA/chapter_labels", verbose = TRUE)
+load(file="./CCFA/major_labels", verbose = TRUE)
+```
+
+## Common parameters
+```{r}
+list0 = c('Age','Gender','Payer','EDAdmit','Surgery','TotalMeds','prev30DayAdmits',
+          'lengthOfStay','numDX','AdmitSource_Cat','Disposition_Cat','DischargeMonth')
+
+# number of forests to do (should be <= to length of "chapter_labels" or "major_labels")
+k = 501
+```
+
+## chapters
+~4 sec for forest on fake data -> 30 min for 500 forests
+
+### Non-random forest
+```{r, warning=FALSE}
+# lists for saving freq matrix and total matrix
+chapter_nr_results = list()
+chapter_nr_totals = list()
+
+ptm <- proc.time()
+for (i in 1:k){
+    print(paste("forest",i))
+  
+    # create temporary label column
+    cutData$c <- chapter_labels[[i]]
+    
+    # fit a forest
+    temp <- analyzeForest(ntree=100, 
+                          cvar='c', yvar='readmitIn30', xvars=c(list0, 'c'),
+                          df=cutData,
+                          method='class', 
+                          control=rpart.control(cp=0.001, maxsurrogate=0, maxcompete=0),
+                          parms=list(split='gini'),
+                          indices=NULL)
+    # save matrices to lists
+    chapter_nr_results[[i]] <- temp$freqMat
+    chapter_nr_totals[[i]] <- temp$totalMat
+}
+proc.time() - ptm
+```
+
+```{r}
+save(chapter_nr_results, file="./CCFA/chapter_nr_251_results")
+save(chapter_nr_totals, file="./CCFA/chapter_nr_251_totals")
+```
+
+```{r}
+#save(chapter_nr_results, file="./CCFA/chapter_nr_251_results")
+#save(chapter_nr_totals, file="./CCFA/chapter_nr_251_totals")
+load("./CCFA/chapter_nr_251_results")
+load("./CCFA/chapter_nr_251_totals")
+```
+
+### Rand. Forest
+```{r, warning=FALSE}
+# lists for saving freq matrix and total matrix
+chapter_rf_results = list()
+chapter_rf_totals = list()
+
+ptm <- proc.time()
+for (i in 1:k){
+    print(paste("forest",i))
+  
+    # create temporary label column
+    cutData$c <- chapter_labels[[i]]
+    
+    # fit a forest
+    temp <- analyzeForest(ntree=100, 
+                          cvar='c', yvar='readmitIn30', xvars=c(list0, 'c'),
+                          df=cutData,
+                          method=list(eval=evalGini, split=splitGiniRandom, init=initGini), 
+                          control=rpart.control(cp=0.001, maxsurrogate=0, maxcompete=0),
+                          parms=list(k=length(list0)+1),
+                          indices=NULL)
+    
+    # save matrices to lists
+    chapter_rf_results[[i]] <- temp$freqMat
+    chapter_rf_totals[[i]] <- temp$totalMat
+}
+proc.time() - ptm
+
+save(chapter_rf_results, file="./CCFA/chapter_rf_500_results")
+save(chapter_rf_totals, file="./CCFA/chapter_rf_500_totals")
+```
+
+## majors
+
+### Non-random
+```{r}
+# lists for saving freq matrix and total matrix
+major_nr_results = list()
+major_nr_totals = list()
+```
+
+```{r}
+list0 = c('Age','Payer','EDAdmit','Surgery','TotalMeds','prev30DayAdmits',
+          'lengthOfStay','numDX','AdmitSource_Cat','Disposition_Cat','DischargeMonth')
+
+f <- function(i){
+    # create temporary label column
+    cutData$m <- major_labels[[i]]
+    
+    # fit a forest
+    temp <- analyzeForest(ntree=100, 
+                          cvar='m', yvar='readmitIn30', xvars=c(list0,'m'),
+                          df=cutData, method='class', 
+                          control=rpart.control(cp=0.001, 
+                                                maxsurrogate=0, 
+                                                maxcompete=0),
+                          parms=list(split='gini'),
+                          indices=NULL, verbose = FALSE)
+    
+    # save matrices to lists
+    list(fm=temp$freqMat, tot=temp$totalMat)
+}
+```
+
+```{r, warning=FALSE}
+set.seed(4)
+ptm <- proc.time()
+results51 <- pbmclapply(X=1:51, FUN=f, mc.cores=6)
+proc.time() - ptm
+```
+
+```{r}
+#save(results51, file="./CCFA/major_nr_51")
+```
+
+```{r}
+ptm <- proc.time()
+results101 <- pbmclapply(X=52:101, FUN=f, mc.cores=6)
+proc.time() - ptm
+```
+
+```{r}
+save(results101, file="./CCFA/major_nr_101")
+```
+
+````{r}
+ptm <- proc.time()
+results201 <- pbmclapply(X=102:201, FUN=f, mc.cores=6)
+proc.time() - ptm
+````
+
+```{r}
+save(results201, file="./CCFA/major_nr_201")
+```
+
+````{r}
+ptm <- proc.time()
+results301 <- pbmclapply(X=202:301, FUN=f, mc.cores=6)
+proc.time() - ptm
+````
+
+```{r}
+save(results301, file="./CCFA/major_nr_301")
+```
+
+````{r}
+ptm <- proc.time()
+results401 <- pbmclapply(X=302:401, FUN=f, mc.cores=6)
+proc.time() - ptm
+````
+
+```{r}
+save(results401, file="./CCFA/major_nr_401")
+```
+
+````{r}
+ptm <- proc.time()
+results501 <- pbmclapply(X=402:501, FUN=f, mc.cores=6)
+proc.time() - ptm
+````
+
+```{r}
+#save(results501, file="./CCFA/major_nr_501")
+```
+
+```{r, warning=FALSE}
+set.seed(4)
+ptm <- proc.time()
+for (i in 1:2){
+    print(paste("forest",i))
+  
+    # create temporary label column
+    cutData$m <- major_labels[[i]]
+    
+    # fit a forest
+    temp <- analyzeForest(ntree=100, 
+                          cvar='m', yvar='readmitIn30', xvars=c(list0,'m'),
+                          df=cutData,
+                          method='class', 
+                          control=rpart.control(cp=0.001, maxsurrogate=0, maxcompete=0),
+                          parms=list(split='gini'),
+                          indices=NULL, verbose = FALSE)
+    # save matrices to lists
+    major_nr_results[[i]] <- temp$freqMat
+    major_nr_totals[[i]] <- temp$totalMat
+}
+proc.time() - ptm
+```
+
+```{r}
+all.equal(results50[[1]]$fm, major_nr_results[[1]])
+all.equal(results50[[2]]$fm, major_nr_results[[2]])
+```
+
+```{r}
+#save(major_nr_results, file="./CCFA/major_nr_51_results")
+#save(major_nr_totals, file="./CCFA/major_nr_51_totals")
+```
+
+### Rand. Forest
+
+```{r}
+#major_rf_results = list()
+#major_rf_totals = list()
+
+load("./CCFA/major_rf_51_results")
+load("./CCFA/major_rf_51_totals")
+```
+
+```{r, warning=FALSE}
+# lists for saving freq matrix and total matrix
+
+ptm <- proc.time()
+for (i in 51:1){
+    print(paste("forest",i))
+  
+    # create temporary label column
+    cutData$m <- major_labels[[i]]
+    
+    # fit a forest
+    temp <- analyzeForest(ntree=100, 
+                          cvar='m', yvar='readmitIn30', xvars=c(list0,'m'),
+                          df=cutData,
+                          method=list(eval=evalGini, split=splitGiniRandom, init=initGini), 
+                          control=rpart.control(cp=0.001, maxsurrogate=0, maxcompete=0),
+                          parms=list(k=length(list0)+1),
+                          indices=NULL, verbose=FALSE)
+    
+    # save matrices to lists
+    major_rf_results[[i]] <- temp$freqMat
+    major_rf_totals[[i]] <- temp$totalMat
+}
+proc.time() - ptm
+```
+
+```{r}
+#save(major_rf_results, file="./CCFA/major_rf_51_results")
+#save(major_rf_totals, file="./CCFA/major_rf_51_totals")
+```
+
+#### parallel
+```{r}
+list0 = c('Age','Payer','EDAdmit','Surgery','TotalMeds','prev30DayAdmits',
+          'lengthOfStay','numDX','AdmitSource_Cat','Disposition_Cat','DischargeMonth')
+
+f2 <- function(i){
+    # create temporary label column
+    cutData$m <- major_labels[[i]]
+    
+    # fit a forest
+    temp <- analyzeForest(ntree=100, 
+                          cvar='m', yvar='readmitIn30', xvars=c(list0,'m'),
+                          df=cutData,
+                          method=list(eval=evalGini, split=splitGiniRandom, init=initGini), 
+                          control=rpart.control(cp=0.001, maxsurrogate=0, maxcompete=0),
+                          parms=list(k=length(list0)+1),
+                          indices=NULL, verbose=FALSE)
+    
+    # save matrices to lists
+    list(fm=temp$freqMat, tot=temp$totalMat)
+}
+```
+
+```{r, warning=FALSE}
+set.seed(4)
+ptm <- proc.time()
+results101 <- pbmclapply(X=1:101, FUN=f2, mc.cores=6)
+proc.time() - ptm
+```
+
+```{r}
+#save(results101, file="./CCFA/2_18_major_rf_101")
+```
+
+```{r}
+ptm <- proc.time()
+results201 <- pbmclapply(X=102:201, FUN=f2, mc.cores=6)
+proc.time() - ptm
+#save(results201, file="./CCFA/2_18_major_rf_201")
+```
+
+```{r}
+ptm <- proc.time()
+results301 <- pbmclapply(X=202:301, FUN=f2, mc.cores=6)
+proc.time() - ptm
+#save(results301, file="./CCFA/2_18_major_rf_301")
+```
+
+```{r, warning=FALSE}
+set.seed(6)
+ptm <- proc.time()
+results401 <- pbmclapply(X=301:401, FUN=f2, mc.cores=6)
+proc.time() - ptm
+```
+
+```{r}
+save(results401, file="./CCFA/2_21_major_rf_401")
+```
+
+```{r, warning=FALSE}
+ptm <- proc.time()
+results501 <- pbmclapply(X=401:501, FUN=f2, mc.cores=6)
+proc.time() - ptm
+```
+
+```{r}
+save(results501, file="./CCFA/2_21_major_rf_501")
+```
+
+
+# Import Results
+````{r}
+#load(chapter_rf_results, file="./CCFA/chapter_rf_500_results")
+#load(chapter_rf_totals, file="./CCFA/chapter_rf_500_totals")
+
+#load(chapter_nr_results, file="./CCFA/chapter_nr_500_results")
+#load(chapter_nr_totals, file="./CCFA/chapter_nr_500_totals")
+
+#load(chapter_rf_results, file="./CCFA/chapter_rf_500_results")
+#load(chapter_rf_totals, file="./CCFA/chapter_rf_500_totals")
+
+load(file="./CCFA/major_rf_51_results")
+load(file="./CCFA/major_rf_51_totals")
+
+load("./CCFA/chapter_nr_251_results")
+load("./CCFA/chapter_nr_251_totals")
+```
+
+# Analyze Results 
+
+```{r}
+table(chapter_labels[[1]])
+table(major_labels[[1]])
+```
+
+```{r}
+vizCoFreqMat(major_nr_results[[1]], order=FALSE) + geom_text(size=1, alpha=0.7) + labs(title="Non-Random Forest")
+#ggsave(filename="./CCFA/major_nr_realdata_no_order.png")
+
+vizCoFreqMat(major_rf_results[[1]], order=FALSE) + geom_text(size=1, alpha=0.7) +
+labs(title="Random Forest")
+#ggsave(filename = "./CCFA/major_rf_realdata_no_order.png")
+```
+
+```{r}
+plot(cluster_mat(major_rf_results[[1]]))
+vizCoFreqMat(major_rf_results[[1]]) + geom_text(size=1, alpha=0.7)
+```
+
+
+```{r}
+major_rf_results[[1]]['M32','M77']
+#major_nr_totals[[1]]['Ch9','Ch7']
+```
+
+```{r}
+plotLevelsDist <- function(resultsList, totalsList, level1, level2){
+  vals = c()
+  for (i in 2:length(resultsList)){
+    vals = c(vals, resultsList[[i]][level1,level2])
+  }
+  
+  temp = data.frame(vals=vals)
+  p <- ggplot(temp, aes(x=vals)) +
+      geom_histogram(binwidth=0.01) +
+      geom_vline(xintercept=0.5, col='red', lty=2) +
+      geom_vline(xintercept=resultsList[[1]][level1,level2], col=pal[4]) +
+      scale_x_continuous(breaks=seq(0,1.1,0.1), limits=c(-0.1,1.1)) +
+      theme_minimal() +
+      labs(title=paste(level1, level2, 
+                       ": stat = ", round(resultsList[[1]][level1,level2],3),
+                       ", total = ", totalsList[[1]][level1,level2] ))
+  return(p)
+}
+```
+
+```{r}
+plotLevelsDist(major_rf_results, major_rf_totals, "M32", "M77")
+major_key[c(32,77),]
+```
+
+
+# All the distributions
+
+```{r}
+aggregateCurves <- function(resultsList){
+  names = rownames(resultsList[[1]])
+  allDist = c()
+  group = c()
+  
+  count = 0
+  for (m in 1:length(names)){
+    for (n in 1:(m-1) ){
+    
+      # pair number
+      level1 = names[n]
+      level2 = names[m]
+      
+      # get all valuec
+      vals = c()
+      for (i in 2:length(resultsList)){
+          vals = c(vals, resultsList[[i]][level1,level2])
+      }
+      allDist = c(allDist, vals)
+      group = c(group, rep(count, times=length(vals)))
+      count = count + 1
+    }
+  }
+  
+  return(data.frame(values=allDist, label=factor(group)))
+}
+```
+
+```{r}
+temp <- aggregateCurves(major_rf_results)
+ggplot(temp, aes(x=values, color=label)) +
+    geom_density(na.rm=TRUE) +
+    theme_minimal() + 
+    theme(legend.position = 'none') + 
+    scale_x_continuous(breaks=seq(0,1.1,0.1), limits=c(-0.01,1.01))
+
+```
