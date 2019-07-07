@@ -10,145 +10,58 @@ output:
 ````{r}
 
 set.seed(4)
+
+# -- Load packages ------------------------------------------------------------
+
+library(R.utils)
+library(wesanderson)
 library(rpart)
+library(data.table)
 
-path.dir <- "/Users/Hallee/Desktop/cofa/R" 
-setwd(path.dir)
+# library(rpart.plot)
+# library(xtable)
+# library(plyr) # for map values
+# library(magrittr) # for %>%
+# library(forcats) # for collapse factor
+# library(MASS) # write.matrix
+# library(parallel)
+# library(pbmcapply)
 
-source('ccfAnalysis.R')
-source('splitFunctionsGini.R')
-source('splitFunctionsGiniRandom.R')
-source('ccfTrials.R')
+# -- Set filepaths ------------------------------------------------------------
 
-df <- read.csv(paste0(path.dir, "/../data/fake.csv"))
+path.dir <- "/Users/Hallee/Desktop/cofa"
+
+# -- Load functions -----------------------------------------------------------
+
+sourceDirectory(paste0(path.dir,"/R")
+
+# -- Load data ----------------------------------------------------------------
+
+df <- read.csv(paste0(path.dir, "/data/fake_data.csv"))
+pal <- wes_palette("FantasticFox")
+
 ````
 
-
-# Import Packages 
+## Data
 ```{r}
+setDT(df)
+df[ , pid := UnitNumber]
 
-library(rpart)
-library(rpart.plot)
-library(xtable)
-library(plyr) # for map values
-library(magrittr) # for %>%
-library(forcats) # for collapse factor
-library(MASS) # write.matrix
-library(parallel)
-library(pbmcapply)
+df0 <- df[ , .(readmitIn30, Age, Gender, 
+             AdmitSource, Disposition, 
+             Payer, EDAdmit, Surgery, TotalMeds, 
+             prev30DayAdmits, numDX, lengthOfStay,
+             DX1Name_chapter)]
 
-source('ccfAnalysis.R')
-source('splitFunctionsGini.R')
-source('splitFunctionsGiniRandom.R')
-source('ccfTrials.R')
-
-pal = wes_palette("FantasticFox")
+head(df0)
 ```
 
-# Import Data
-
+## Tree
 ```{r}
-#postData = read.csv("./FakeData/FakeData_processed.csv")
-postData = read.csv("/Volumes/HEALTHCARE/local_thesis_files/ProcessedData_11_2.csv")
-dim(postData)
-
-source("makeVariables.R")
-source("cutoffDates.R")
-dim(cutData)
-
-cutData = cutData[which(!(cutData$DX1Name_major == "" | cutData$DX1Name_chapter == "") ),]
-cutData$DX1Name_chapter <- droplevels(cutData$DX1Name_chapter)
-cutData$DX1Name_major <- droplevels(cutData$DX1Name_major)
-dim(cutData)
+m <- rpart( readmitIn30 ~ ., data=data.frame(df0), control = rpart.control(maxcompete = 0))
 ```
 
-# chapter1, major1, major1c
-
-chapter1 - equivalent to DX1Name_chapter but labelled Ch1, Ch2, ... for easy reading
-
-major1 - equivalent to DX1Name_major but labelled M1, M2, ... for easy reading
-
-major1c - all majors with <100 examples are collapsed into 'other'
-
-## chapter
-```{r}
-# make list of new names
-m = length(levels(cutData$DX1Name_chapter))
-chapterNames = c(sapply("Ch",1:m,FUN=paste0))
-
-# save ket for chapters
-chapter_key = cbind(chapterNames, c(levels(cutData$DX1Name_chapter)) ) 
-#write.csv(chapter_key, file="./CCFA/chapter_key.csv", row.names = FALSE)
-#write(print(xtable(chapter_key), include.rownames = FALSE), file="./CCFA/chapter_table.txt")
-
-# create new simple chapter variable
-cutData$chapter1 <- mapvalues(cutData$DX1Name_chapter, 
-                              from = c(levels(cutData$DX1Name_chapter)), 
-                              to = chapterNames )
-```
-
-```{r}
-chapter_tbl = merge(data.frame(chapter_key), data.frame(table(cutData$DX1Name_chapter)), by.x="V2", by.y="Var1")
-names(chapter_tbl) <- c("LongName","ShortName","Freq")
-save(chapter_tbl, file="./CCFA/chapter_tbl_key_and_freq")
-```
-
-## major
-```{r}
-# make list of new names
-m = length(levels(cutData$DX1Name_major))
-majorNames = c(sapply("M",1:m,FUN=paste0))
-
-# save key for majors
-major_key = cbind(majorNames, c(levels(cutData$DX1Name_major)) )
-#write.csv(major_key, file="./CCFA/major_key.csv", row.names = FALSE)
-#write(print(xtable(major_key), include.rownames = FALSE), file="./CCFA/major_table.txt")
-
-# create new variable
-cutData$major1 <- mapvalues(cutData$DX1Name_major, 
-                              from = c(levels(cutData$DX1Name_major)), 
-                              to = majorNames )
-```
-
-```{r}
-major_tbl = merge(data.frame(major_key), data.frame(table(cutData$DX1Name_major)), by.x="X", by.y="Var1")
-names(major_tbl) <- c("LongName","ShortName","Freq")
-save(major_tbl, file="./CCFA/major_tbl_key_and_freq")
-```
-
-
-## Consolidation
-```{r}
-tbl = data.frame(table(cutData$major1))
-lst <- as.character(tbl[tbl$Freq < 100,"Var1"])  # change this for fake/real data!
-cutData$major1c <- cutData$major1 %>% fct_collapse(Other = c(lst))
-
-# number of levels remaining
-length(unique(cutData$major1c))
-
-#write(print(xtable(major_key[major_key[,1] %in% levels(cutData$major1c),]), 
-#            include.rownames = FALSE), 
-#            file="./CCFA/major_table_consolidated.txt")
-
-```
-
-````{r}
-unique(cutData$major1c)
-```
-
-```{r}
-major_key <- rbind(c("Other","Other - user created category"),major_key)
-major_tbl_consolidated = merge(major_key[major_key[,1] %in% levels(cutData$major1c),],
-                  data.frame(table(cutData$major1c)), by.x="majorNames", by.y="Var1")
-names(major_tbl_consolidated) <- c("ShortName","LongName","Freq")
-save(major_tbl_consolidated, file="./CCFA/major_tbl_consolidated_key_and_freq")
-```
-
-```{r}
-#major_key <- read.csv(file="./CCFA/major_key.csv")
-#chapter_key <- read.csv(file="./CCFA/chapter_key.csv")
-```
-
+## Forest
 
 # Run Experiment
 
