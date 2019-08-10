@@ -1,11 +1,12 @@
 Package: cofa
 Type: Package
-Title: What the Package Does (Title Case)
+Title: Categorical Co-Frequency Analysis of Decision Trees and Random Forests
 Version: 0.1.0
-Author: Who wrote it
-Maintainer: The package maintainer <yourself@somewhere.net>
+Imports: rpart, ggplot2
+Author: Hallee E. Wong
+Maintainer: Hallee E. Wong <hew1@williams.edu>
 Description: More about what it does (maybe more than one line)
     Use four spaces when indenting paragraphs within the Description.
-License: What license is it under?
+License: MIT
 Encoding: UTF-8
 LazyData: true
