@@ -9,12 +9,12 @@
 #' @param seed a random seed
 #'
 cofaTest <- function(k=10,
-                         data,
-                         xvars,
-                         yvar,
-                         cvar,
-                         ntree=100,
-                         seed=NULL){
+                     data,
+                     xvars,
+                     yvar,
+                     cvar,
+                     ntree=100,
+                     seed=NULL){
 
   df <- data.frame(data)
 

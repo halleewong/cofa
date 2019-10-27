@@ -6,8 +6,7 @@ Depends: R (>= 3.4.2), rpart
 Imports: stats, ggplot2, viridis, pbmcapply
 Author: Hallee E. Wong
 Maintainer: Hallee E. Wong <hew1@williams.edu>
-Description: More about what it does (maybe more than one line)
-    Use four spaces when indenting paragraphs within the Description.
+Description: 
 License: MIT
 Encoding: UTF-8
 LazyData: true
