@@ -3,6 +3,7 @@
 This R package provides an implementation of the methods described in:
 
 [Categorical Co-Frequency Analysis: Clustering Diagnosis Codes to Predict Hospital Readmissions](https://arxiv.org/abs/1909.00306)
+
 Hallee E. Wong, Brianna C. Heggeseth, Steven J. Miller
 
 # Installation
