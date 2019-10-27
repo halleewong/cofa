@@ -1,4 +1,4 @@
-# cofa
+# CoFA
 
 This R package provides an implementation of the methods described in:
 
