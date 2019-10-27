@@ -1,95 +1,97 @@
 
-# Summary: Fits forest and returns frequency matrix
-# params:
-#   ntree - (integer) number of tree to grow
-#   cvar - (string) name of categorical variable to study
-#   data - (data.frame) data to subset
-#   yvar - (string) name of y variable column
-#   xvars - (list) names of x variables to use
-#   method - (list) user defined functions or key word
-#   control - (rpart.control) object to pass to control in rpart
-#   parms - (list) list of parms to pass to rpart
-#   seed - set.seed()
-#   indices - list of lists to fit each tree to
-# returns:
-#   list(freqMat=<matrix>, trees=<list of rpart.obj>)
+#' Fits a Random Forest and calculated CoFA statistics for all pairs of categories.
 #'
-#' @param
-#' @return
-cofaForest <- function(formula,
-                       ntree,
+#' @param ntree integer number of trees to fit within the random forest
+#' @param yvar name of the column containing a binary outcome variable
+#' @param cvar name of the
+#' @param xvars vector of names of columns to use as predictors
+#' @param data a data.frame including columns \code{yvar}, \code{cvar} and \code{xvars}
+#' @param indices a list of vectors containing the indices of rows to be used when fitting each tree. If \code{NULL}, rows will be randomly sampled with replacement.
+#'
+#' @return A list of outputs including a matrix of CoFA statistics (\code{freqMat}), a matrix with the total number of times each pair of categories are used for splitting (\code{totalMat}), a list of rpart tree objects (\code{tree}) and a list of the indices used to fit each tree (\code{indices}).
+#
+
+cofaForest <- function(ntree=100,
                        cvar,
+                       yvar,
+                       xvars,
                        data,
-                       indices,
-                       variable,
-                       method = 'class',
-                       control = rpart.control(),
-                       parms = list(split='gini'),
-                       seed
+                       control.cp = 0.001,
+                       seed = 4,
+                       indices=NULL
 ){
 
-  if ( ntree==0 & is.null(indices)) stop("Need to provide indices or ntree")
+  df <- data.frame(data)
 
-  # should check all indices are between 1:nrow(data)
-  data <- data.frame(data)
+  lapply(colnames(df), function(col) {
+    if ( ! col %in% colnames(df) ) stop(paste(col, "is not a column in data"))
+  })
+
+  if ( ntree==0 & is.null(indices)) stop("Need to provide indices or ntree")
+  if ( is.null(indices) & !is.null(seed) ) set.seed(seed)
+
+  # should check all indices are between 1:nrow(df)
+
   if ( !is.null(indices) ){
     # make sure ntree is consistent with length of indices
-    ntree <- length(indices)
+    ntree = length(indices)
   }
 
   # store info about categorical variable of interest
-  levelNames <- levels(data[,cvar])
-  l <- length(levelNames)
+  levelNames = levels(df[,cvar])
+  l = length(levelNames)
 
   # matrix to keep track of counts together, apart
-  togetherMat <- matrix(0, nrow=l, ncol=l, dimnames=list(levelNames, levelNames))
-  apartMat <- matrix(0, nrow=l, ncol=l, dimnames=list(levelNames, levelNames))
-
-  # prevent saving of surrogate/competing splits
-  control$maxsurrogate <- 0
-  control$maxcompete <- 0
+  togetherMat <- matrix(0, nrow=l, ncol=l)
+  apartMat <- matrix(0, nrow=l, ncol=l)
+  colnames(togetherMat) = rownames(togetherMat) = levelNames
+  colnames(apartMat) = rownames(apartMat) = levelNames
 
   treeList <- list()
   indexList <- list()
 
   for (k in 1:ntree){
 
+    # progress bar
+    if ( ntree > 10 & k %% round(ntree/10) == 0 ){
+      cat( paste0(" --> ", 10*(k/round(ntree/10)),"%") )
+      if (k == ntree){ cat('\n') } # to end line
+    }
+
     # get indices of data to use
     if (is.null(indices)){
       # re-sample data
-      idx <- sample(1:nrow(data), size=nrow(data), replace=TRUE)
-      print(idx)
-    } else {
-      idx <- indices[[k]]
-    }
+      idx <- sample(1:nrow(df), size=nrow(df), replace=TRUE)
+    } else {idx <- indices[[k]]}
 
     # fit tree
-    tree.obj <<- rpart(formula = formula,
-                       data = data[idx],
-                       control = control,
-                       method = method,
-                       parms = parms)
+    tree.obj <- rpart(formula=as.formula(paste(yvar,"~.")),
+                      data=df[idx,unique(c(yvar,xvars,cvar))],
+                      control=rpart.control(cp=control.cp, maxsurrogate=0, maxcompete = 0),
+                      method=list(eval=evalGini, split=splitGiniRandom, init=initGini),
+                      parms=list(k=length(unique(c(xvars,cvar)))))
 
     # save information
     treeList[[k]] <- tree.obj
     indexList[[k]] <- idx
 
     if (is.null(tree.obj$splits)){
-      warning(paste("\ntree", k, "is a root"))
+      print(paste("Tree", k, "is a root"))
       next
     }
 
     # in case a subset does not include all levels
-    localLevels <- levels(data[idx,cvar])
+    localLevels <- levels(df[idx,cvar])
 
     # get matrix of level splits
-    splitMatrix <- getMatrix(tree.obj, varName = cvar, levelNames = localLevels)
+    splitMatrix <- getMatrix(tree.obj,varName=cvar,levelNames=localLevels)
 
     # if the cvar doesnt appear in any node
     if (is.null(splitMatrix)){
-      warning(paste("\ntree", k, "never splits on", variable))
+      print(paste("Tree", k, "does not use", cvar))
+      #print(tree.obj$splits)
       next
-    }
+      }
 
     for (i in 1:length(localLevels)){
       for (j in 1:i){
@@ -108,9 +110,12 @@ cofaForest <- function(formula,
     }
 
   }
+
   # calculate frequency matrix
   freqMat <- togetherMat / (togetherMat + apartMat)
+  if (!isSymmetric(freqMat)) stop("Frequency matrix is not symmetric")
 
+  # return list of info
   return(list(freqMat = freqMat, # frequency matrix for individual objects
               trees = treeList, # list of tree objects
               totalMat = (togetherMat+apartMat), # matrix of count of times 2 levels used at node

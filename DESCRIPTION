@@ -2,7 +2,8 @@ Package: cofa
 Type: Package
 Title: Categorical Co-Frequency Analysis of Decision Trees and Random Forests
 Version: 0.1.0
-Imports: rpart, ggplot2
+Depends: R (>= 3.4.2), rpart
+Imports: stats, ggplot2, viridis, pbmcapply
 Author: Hallee E. Wong
 Maintainer: Hallee E. Wong <hew1@williams.edu>
 Description: More about what it does (maybe more than one line)
@@ -10,3 +11,4 @@ Description: More about what it does (maybe more than one line)
 License: MIT
 Encoding: UTF-8
 LazyData: true
+RoxygenNote: 6.1.1

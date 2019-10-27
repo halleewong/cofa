@@ -15,8 +15,8 @@ gatherFMValues <- function(results,k=10){
   return(tbl)
 }
 
-# plots a simple histogram of the aggregated fm values
-plotFMValues <- function(df=tbl){
+# plots a simple histogram of the aggregated cofa values
+plotCofaValues <- function(df=tbl){
   ggplot(df, aes(x=values)) + xlim(-0.1,1.1) +
     geom_histogram(binwidth=0.01) +
     theme_minimal()
@@ -29,8 +29,6 @@ plotTrials <- function(df=tbl){
     theme_minimal()
 }
 
-## --- New Functions ----------------------------------------------------------
-
 # summary: Retrieves all test statistics for level1-level2 from the results
 # parameters:
 #   results -
@@ -40,7 +38,7 @@ plotTrials <- function(df=tbl){
 valueDist <- function(results, level1, level2){
   vals = c()
   for (i in 1:length(results)){
-    vals = c(vals, results[[i]]$fm[level1,level2])
+    vals = c(vals, results[[i]]$freqMat[level1,level2])
   }
   return(vals)
 }
@@ -60,21 +58,22 @@ plotLevelsDist <- function(result0, results, level1, level2, binwidth=0.01, norm
   p <- ggplot(temp, aes(x=vals)) +
     geom_vline(xintercept=0.5, col='gray', lty=2) +
     geom_histogram(binwidth=binwidth) +
-    geom_vline(xintercept=result0$fm[level1,level2], col=wes_palette('Zissou')[2], size=1) +
+    geom_vline(xintercept=result0$freqMat[level1,level2], size=1) +
     scale_x_continuous(breaks=seq(0,1,0.2), limits=c(-0.01,1.01)) +
-    scale_y_continuous(breaks=seq(0,70,20), limits=c(0,75)) +
+    #scale_y_continuous(breaks=seq(0,70,20), limits=c(0,75)) +
     theme_light() +
     labs(title=paste(level1, level2,
-                     ": stat = ", round(result0$fm[level1,level2],3),
-                     ", total = ", result0$tot[level1,level2] ),
+                     ": stat = ", round(result0$freqMat[level1,level2],3),
+                     ", total = ", result0$totalMat[level1,level2] ),
          x="Value", y="Count") +
     theme(panel.grid.minor = element_blank(),
           panel.grid.major = element_blank(),
           text = element_text(size=20))
 
   if (normal_distribution == TRUE){
-    p <- p + stat_function(color=wes_palette('Zissou')[4], size=1, fun = function(x) dnorm(x, mean = mean(temp$vals),
-                                                                                           sd = sd(temp$vals)) * nrow(temp) * binwidth)
+    p <- p + stat_function(size=1,fun = function(x) {
+      dnorm(x, mean = mean(temp$vals), sd = sd(temp$vals)) * nrow(temp) * binwidth
+      })
   }
 
   return(p)
@@ -86,9 +85,9 @@ plotLevelsDist <- function(result0, results, level1, level2, binwidth=0.01, norm
 # returns:
 #   matrix of mean values
 meanMatrix <- function(result){
-  fmat = result[[1]]$fm
+  fmat = result[[1]]$freqMat
   for (i in 2:length(result)){
-    fmat = fmat + result[[i]]$fm
+    fmat = fmat + result[[i]]$freqMat
   }
   return(fmat/length(result))
 }
@@ -100,7 +99,7 @@ meanMatrix <- function(result){
 #   data.frame object with all values from each null-hypothesis distribution
 aggregateDistributions <- function(result){
 
-  levelNames = rownames(result[[1]]$fm)
+  levelNames = rownames(result[[1]]$freqMat)
   allDist = c()
   group = c()
   level1name = c()
@@ -117,7 +116,7 @@ aggregateDistributions <- function(result){
       # get statistic value from all trials
       vals = c()
       for (i in 2:length(result)){
-        vals = c(vals, result[[i]]$fm[level1,level2])
+        vals = c(vals, result[[i]]$freqMat[level1,level2])
       }
       allDist = c(allDist, vals)
       group = c(group, rep(count, times=length(vals)))
@@ -172,8 +171,8 @@ metricMat <- function(result0, results, metric){
   }
 
   # create empty matrix
-  levels = colnames(result0$fm)
-  mat = matrix(NA, nrow = length(levels), ncol=length(levels))
+  levels <- colnames(result0$freqMat)
+  mat <- matrix(NA, nrow = length(levels), ncol=length(levels))
   colnames(mat) = rownames(mat) = levels
 
   # claculate scores
@@ -183,11 +182,11 @@ metricMat <- function(result0, results, metric){
       level2 = levels[j]
 
       if (metric == "zScore"){
-        z = zScore(value=result0$fm[level1,level2],
+        z = zScore(value=result0$freqMat[level1,level2],
                    dist=valueDist(results,level1,level2))
       }
       else if (metric == "pValue"){
-        z = pValue(value=result0$fm[level1,level2],
+        z = pValue(value=result0$freqMat[level1,level2],
                    dist=valueDist(results,level1,level2))
       } else {z = NA}
 
@@ -208,8 +207,8 @@ getMaskedMat <- function(result0, results, metric, cutoff){
   } else if (metric=="zScore"){
     mask = abs(metricMat(result0, results, metric=metric)) > cutoff
   }
-  masked_mat = result0$fm
-  masked_mat[!mask] <- NA
+  masked_mat = result0$freqMat
+  masked_mat[mask==FALSE | is.na(mask)] <- NA
   diag(masked_mat) <- NA
 
   return(masked_mat)
@@ -228,21 +227,29 @@ getMaskedMat <- function(result0, results, metric, cutoff){
 #   ggplot object of the matrix
 vizMaskedMatrix <- function(result0, results, metric, cutoff, order, size=1){
 
-  masked_mat = getMaskedMat(result0, results, metric, cutoff)
+  masked_mat <- getMaskedMat(result0, results, metric, cutoff)
 
   if (order == FALSE){
-    p <- vizCoFreqMat(mat, order=FALSE) +
-      geom_text(data = meltForViz(get_lower_tri(masked_mat)),
-                aes(label=signif(value,1)),
-                size=size, alpha=0.7)
+    masked_mat_ordered <- masked_mat
   } else {
-    hc <- cluster_mat(result0$fm)
+    hc <- cluster_mat(result0$freqMat)
     masked_mat_ordered <- masked_mat[hc$order, hc$order]
-
-    p <- vizCoFreqMat(result0$fm, order=TRUE) +
-      geom_text(data = meltForViz(get_lower_tri(masked_mat_ordered)),
-                aes(label=signif(value,1)),
-                size=size, alpha=0.7)
   }
+
+  # all lower tri tiles
+  mt2 <- masked_mat_ordered
+  mt2[is.na(mt2)] <- 0.5
+  diag(mt2) <- 0.5
+
+  # non signif tiles
+  nullmat <- mt2
+  nullmat[nullmat != 0.5] <- NA
+  nullmat_data <- meltForViz(get_lower_tri(nullmat))
+
+  p <- vizCoFreqMat(mt2, order=FALSE, alph=FALSE, text=FALSE) +
+    geom_tile(data=nullmat_data, aes(x=var1, y=var2), size=1, fill="gray98", colour=NA) +
+    geom_text(data=meltForViz(get_lower_tri(round(masked_mat_ordered,1))),
+              aes(x=var1, y=var2, label=value), size=1, alpha=0.7)
+
   return(p)
 }

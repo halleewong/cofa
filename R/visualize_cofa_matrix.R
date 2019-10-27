@@ -30,7 +30,7 @@ cluster_mat <- function(freqMat, verbose=FALSE, na.value=0){
   freqMat[is.na(freqMat)] <- na.value
   dd <- as.dist((1-freqMat)/2)
   if ((verbose) == TRUE){print(dd)} # for debugging
-  return(hclust(dd))
+  return(stats::hclust(dd))
 }
 
 # summary:melt a matrix and order the factors so they will be plotted in the
@@ -60,7 +60,7 @@ meltForViz <- function(temp){
 # returns:
 #   ggplot object of cofrequency matrix plot
 #
-vizCoFreqMat <- function(freqMat, order=TRUE, alph=TRUE, sigfigs=1){
+vizCoFreqMat <- function(freqMat, order=TRUE, alph=FALSE, sigfigs=1, text=TRUE){
 
   if ( sum(!is.na(freqMat)) == 0 ) stop("given frequency matrix is all NA")
 
@@ -70,13 +70,16 @@ vizCoFreqMat <- function(freqMat, order=TRUE, alph=TRUE, sigfigs=1){
   }
 
   # reformat frequency matrix
-  if (order){ temp <- get_lower_tri(reorder_mat(freqMat))
-  } else { temp <- get_lower_tri(freqMat) }
+  if (order){
+    temp <- get_lower_tri(reorder_mat(freqMat))
+  } else {
+    temp <- get_lower_tri(freqMat)
+  }
 
   melted_freq_mat = meltForViz(temp)
 
   # plot with ggplot
-  ggplot(data = melted_freq_mat, aes(var1, var2, fill = value, label=signif(value,sigfigs))) +
+  p <- ggplot(data = melted_freq_mat, aes(var1, var2, fill = value, label=signif(value,sigfigs))) +
     geom_tile(color="white") +
     coord_fixed() + theme_light() +
     theme(axis.title.x = element_blank(),
@@ -87,7 +90,10 @@ vizCoFreqMat <- function(freqMat, order=TRUE, alph=TRUE, sigfigs=1){
           legend.direction = "horizontal",
           axis.text.x = element_text(angle = 90, vjust=0.5, hjust=0)) +
     guides(fill = guide_colorbar(barwidth = 10, barheight = 0.5)) +
-    scale_fill_viridis(option='plasma', name="", direction=1,
+    scale_fill_viridis(name="", direction=1,
                        begin=0, end=0.95, limits=c(0,1), alpha=0.5)
 
+  if (text) { p <- p + geom_text(size=1, alpha=0.7) }
+
+  return(p)
 }

@@ -7,8 +7,6 @@
 # returns:
 #   matrix with each col corresp. to a level of <varName>
 #   each row corresponding to a node split that used <varName>
-
-#' Retrieves the
 getMatrix <- function(treefit, varName, levelNames){
 
   if (is.null(treefit$splits)){
@@ -55,37 +53,29 @@ getFreqofLevel <- function(mat,i){
   return( sum(!is.na(mat[,i])) )
 }
 
-# summary: counts appearances of all levels in a single tree
-# parameters:
-#   mat - a matrix from getMatrix()
-# returns:
-#   (integer vector) number of splits involving each level
-#   i.e. number of rows with 1 or 3
+
+#' Counts the appearances of all categories in a single tree
+#' @param mat a matrix returned by \code{getMatix()}
+#' @return An integer vector containing the number of splits involving each category
 getAllFreqofLevel  <- function(mat){
   vec <- colSums(!is.na(mat))
   names(vec) <- colnames(mat)
   return(vec)
 }
 
-# Summary: get the counts together and apart of two levels
-#   from a matrix
-# parmams:
-#   i,j - (integer) indices or (string) names of levels to compare
-#   mat - a labeled matrix or vector returned by getMatrix()
-# returns:
-#   list of the form list(togehter= ,apart= )
-#   if the levels never appear together will return list(together=0, apart=0)
-
-#' Counts the number of times two levels split together versus split apart in  the cofa statistic for a pair of levels
+#' Counts the number of times two categories split together versus split apart necessary to calculate the cofa statistic for a pair of levels
 #'
-#' This helper function is used by \code{makeCofaMat()}
+#' This helper function is used by \code{makeCofaMat()} and \code{cofaForest()}
 #'
 #' @param i the index of a level
 #' @param j the index of a level
-#' @param mat a split matrix from a
-#' @return A list containing two objects: \code{together} is the number of times level \code{i} and level \code{j} of the categorical variable of interest split in the same direction, \code{apart} is the number of times level \code{i} and level \code{j} split apart.
-getCounts <- function(i,j, mat){
+#' @param mat a split matrix returned by \code{getMatrix()}
+#' @return A list containing two objects:
+#' \code{together} is the number of times level \code{i} and level \code{j} of the categorical variable of interest split in the same direction
+#' \code{apart} is the number of times level \code{i} and level \code{j} split apart.
 
+getCounts <- function(i,j, mat){
+  #browser()
   if (class(mat) == 'matrix'){
 
     tbl = table(mat[,i] == mat[,j])
